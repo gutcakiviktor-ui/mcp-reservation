@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Réservation — Maison Concept Polaire</title>
+<style>
+ body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#fafbff;color:#222}
+ .wrap{max-width:880px;margin:0 auto;padding:24px 16px}
+ .card{background:#fff;border:1px solid #e8ecf7;border-radius:14px;padding:18px 16px;box-shadow:0 2px 8px rgba(0,0,0,.03)}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+ label{font-size:14px;color:#334}
+ input,select{width:100%;padding:10px;border:1px solid #d9e1f9;border-radius:10px;font-size:15px}
+ .muted{color:#667}.btn{display:inline-block;background:#0a5cff;color:#fff;padding:12px 18px;border-radius:10px;font-weight:600;text-decoration:none;border:none;cursor:pointer}
+ .btn:disabled{opacity:.5;cursor:not-allowed}
+ .tot{background:#f7f9ff;border:1px solid #e2e8ff;border-radius:12px;padding:12px}
+ .row{display:flex;justify-content:space-between;gap:10px;margin:6px 0}.warn{background:#fff8e6;border:1px solid #ffe2a8;border-radius:8px;padding:8px 10px;margin-top:10px}
+</style></head>
+<body>
+<div class="wrap">
+  <h1 style="margin:0 0 10px">Maison Concept Polaire — Réservation</h1>
+  <p class="muted" style="margin:0 0 18px">Choisissez vos dates et le logement. Le montant s'actualise automatiquement.</p>
+
+  <div class="card" style="margin-bottom:14px">
+    <div class="grid">
+      <div><label>Logement</label>
+        <select id="lodging"><option value="apartment">Appartement</option><option value="house">Maison entière</option></select>
+      </div>
+      <div><label>Date d'arrivée</label><input type="date" id="start"></div>
+      <div><label>Date de départ</label><input type="date" id="end"></div>
+      <div><label>Adultes</label><input type="number" id="adults" min="1" value="2"></div>
+      <div><label>Enfants (≥2 ans)</label><input type="number" id="children" min="0" value="0"></div>
+      <div><label>Bébés (&lt;2 ans)</label><input type="number" id="babies" min="0" value="0"></div>
+      <div><label>Nom (optionnel)</label><input type="text" id="name" placeholder="Nom Prénom"></div>
+      <div><label>Email (pour le reçu)</label><input type="email" id="email" placeholder="nom@example.com"></div>
+    </div>
+  </div>
+
+  <div class="tot" id="summary"></div>
+  <div class="warn" id="policy" style="display:none"></div>
+  <div style="margin-top:12px"><button class="btn" id="payBtn" disabled>Payer maintenant</button></div>
+
+  <p class="muted" style="margin-top:14px">
+    Annulation : &gt;30 jours — remboursement intégral ; 15–30 jours — 50 % ; &lt;15 jours — non remboursable.
+    Réservation de dernière minute (≤7 jours) — paiement 100 % non remboursable.
+  </p>
+</div>
+
+<script>
+const EUR = v => (Math.round(v*100)/100).toFixed(2) + ' €';
+const state = { baseApt:60, baseHouse:210, extra:15, cleaningHouse:50, taxe:1.2 };
+
+function daysBetween(a,b){ return Math.max(0, Math.round((b-a)/(24*3600*1000))); }
+
+function recalc(){
+  const lodging = document.getElementById('lodging').value;
+  const s = document.getElementById('start').value;
+  const e = document.getElementById('end').value;
+  const adults = +document.getElementById('adults').value||0;
+  const children = +document.getElementById('children').value||0;
+  const babies = +document.getElementById('babies').value||0;
+  const email = document.getElementById('email').value.trim();
+  const name  = document.getElementById('name').value.trim();
+
+  const ok = s && e && (new Date(e) > new Date(s)) && adults >= 1;
+  document.getElementById('payBtn').disabled = !ok;
+  if(!ok){ document.getElementById('summary').innerHTML='Veuillez choisir des dates valides.'; return; }
+
+  const d0 = new Date(s+'T00:00:00'), d1 = new Date(e+'T00:00:00');
+  const nights = daysBetween(d0,d1);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const daysUntil = daysBetween(today,d0);
+  const lastMinute = daysUntil <= 7;
+
+  const nightly = (lodging==='house') ? state.baseHouse : state.baseApt;
+  const lodgingTotal = nightly * nights;
+
+  const payingGuests = Math.max(0, adults + children);
+  const extraGuests = Math.max(0, payingGuests - 2);
+  const extraTotal = extraGuests * state.extra * nights;
+  const cleaning = (lodging==='house') ? state.cleaningHouse : 0;
+  const taxe = state.taxe * payingGuests * nights;
+  const lodgingPlus = lodgingTotal + extraTotal + cleaning;
+
+  let nowText='', dueText=''; let payNow=0;
+  if(lastMinute){
+    payNow = lodgingPlus + taxe;
+    nowText = `À payer maintenant (100% last-minute, non remboursable): <b>${EUR(payNow)}</b>`;
+    dueText = `Taxe incluse dans ce paiement.`;
+    document.getElementById('policy').style.display='block';
+    document.getElementById('policy').innerHTML = 'Réservation ≤ 7 jours : paiement 100 % à la réservation — non remboursable.';
+  } else {
+    payNow = 0.5 * lodgingPlus;
+    nowText = `Acompte (50% hébergement+ménage) à payer maintenant : <b>${EUR(payNow)}</b>`;
+    dueText = `Solde (50% restants) + taxe de séjour: ${EUR(lodgingPlus - payNow)} + ${EUR(taxe)} (à régler 7 jours avant l’arrivée).`;
+    document.getElementById('policy').style.display='block';
+    document.getElementById('policy').innerHTML = 'Annulation : >30j intégral, 15–30j 50%, <15j non remboursable.';
+  }
+
+  document.getElementById('summary').innerHTML = `
+    <div class="row"><span>Hébergement (${nights} nuit${nights>1?'s':''})</span><b>${EUR(lodgingTotal)}</b></div>
+    <div class="row"><span>Supplément invités (${extraGuests} x 15 €/nuit)</span><b>${EUR(extraTotal)}</b></div>
+    ${cleaning?`<div class="row"><span>Ménage</span><b>${EUR(cleaning)}</b></div>`:''}
+    <div class="row"><span>Taxe de séjour (1,20 €/pers./nuit)</span><b>${EUR(taxe)}</b></div>
+    <hr><div class="row"><span>${nowText}</span></div>
+    <div class="row"><span class="muted">${dueText}</span></div>
+  `;
+
+  document.getElementById('payBtn').onclick = async () => {
+    const res = await fetch('/.netlify/functions/create-session', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        lodgingType:lodging, startDate:s, endDate:e,
+        adults, children, babies, customerEmail:email, customerName:name
+      })
+    });
+    const data = await res.json();
+    if(data?.url){ window.location.href = data.url; } else { alert('Erreur: ' + (data?.error||'réessayez.')); }
+  };
+}
