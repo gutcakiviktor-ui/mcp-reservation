@@ -1,5 +1,5 @@
-netlify/functions/create-session.js
-import Stripe from 'stripe';
+// netlify/functions/create-session.js (CommonJS)
+const Stripe = require('stripe');
 
 const CORS = () => ({
   'Access-Control-Allow-Origin': process.env.ALLOWED_ORIGINS || '*',
@@ -7,9 +7,9 @@ const CORS = () => ({
   'Access-Control-Allow-Headers': 'Content-Type',
 });
 
-const EUR = v => Math.round(v * 100); // cents
+const EUR = v => Math.round(v * 100); // в центах
 
-export async function handler(event) {
+exports.handler = async (event) => {
   // CORS preflight
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: CORS(), body: '' };
@@ -19,98 +19,72 @@ export async function handler(event) {
   }
 
   try {
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
     const body = JSON.parse(event.body || '{}');
 
     const {
-      lodgingType = 'apartment',
-      startDate, endDate,
-      adults = 2, children = 0, babies = 0,
-      customerEmail = '', customerName = ''
+      lodging,            // 'apartment' | 'house'
+      nights,             // число ночей
+      extraGuests = 0,    // доп. гости > 2
+      cityTaxTotal = 0,   // taxe de séjour ИТОГО за весь период
+      payMode = 'deposit' // 'deposit' | 'balance' | 'full'
     } = body;
 
-    // --- тарифы (как мы договаривались) ---
-    const BASE_APT = 60;
-    const BASE_HOUSE = 210;
-    const EXTRA_GUEST_PER_NIGHT = 15;
-    const CLEANING_HOUSE = 50;
-    const TAXE_PER_PERSON_PER_NIGHT = 1.2;
+    // БАЗОВЫЕ ТАРИФЫ (€/ночь, 2 гостя)
+    const base = lodging === 'house' ? 210 : 60;
+    const cleaning = lodging === 'house' ? 50 : 0; // разово за stay
+    const extra = 15 * extraGuests * nights;
 
-    // (сезоны можно добавить позже)
-    const SEASONS = []; // [{from:'2025-06-01', to:'2025-08-31', apt:80, house:260}]
+    const subtotal = base * nights + extra + cleaning;
+    let toPay = subtotal;
 
-    const parse = s => new Date(s + 'T00:00:00');
-    const MS = 86400000;
-    const d0 = parse(startDate);
-    const d1 = parse(endDate);
-    const nights = Math.max(0, Math.round((d1 - d0) / MS));
-    if (!startDate || !endDate || nights <= 0) {
-      return { statusCode: 400, headers: CORS(), body: JSON.stringify({ error: 'Invalid dates' }) };
-    }
+    if (payMode === 'deposit') toPay = subtotal * 0.5;
+    if (payMode === 'balance') toPay = subtotal * 0.5 + cityTaxTotal; // солд + вся taxe
+    if (payMode === 'full') toPay = subtotal + cityTaxTotal;
 
-    const today = new Date(); today.setHours(0,0,0,0);
-    const daysUntil = Math.round((d0 - today) / MS);
-    const isLastMinute = daysUntil <= 7;
-
-    const rateFor = (date, type) => {
-      const ymd = date.toISOString().slice(0,10);
-      const s = SEASONS.find(x => ymd >= x.from && ymd <= x.to);
-      return (type === 'house' ? (s?.house ?? BASE_HOUSE) : (s?.apt ?? BASE_APT));
-    };
-
-    let lodgingTotal = 0;
-    for (let i = 0; i < nights; i++) {
-      lodgingTotal += rateFor(new Date(d0.getTime() + i * MS), lodgingType);
-    }
-
-    const payingGuests = Math.max(0, adults + children); // bébés gratuits
-    const extraGuests = Math.max(0, payingGuests - 2);
-    const extraTotal = extraGuests * EXTRA_GUEST_PER_NIGHT * nights;
-    const cleaning = lodgingType === 'house' ? CLEANING_HOUSE : 0;
-    const taxe = TAXE_PER_PERSON_PER_NIGHT * payingGuests * nights;
-    const lodgingPlus = lodgingTotal + extraTotal + cleaning;
-
-    let lineItems = [];
-    if (isLastMinute) {
-      lineItems = [
-        { name: 'Hébergement (100% last minute)', amount: EUR(lodgingPlus) },
-        { name: 'Taxe de séjour', amount: EUR(taxe) },
-      ];
-    } else {
-      const acompte = 0.5 * lodgingPlus;
-      lineItems = [{ name: 'Acompte 50% (hébergement+ménage)', amount: EUR(acompte) }];
-    }
-
-    const toStripeItems = arr => arr
-      .filter(x => x.amount > 0)
-      .map(x => ({
-        price_data: {
-          currency: 'eur',
-          product_data: { name: x.name },
-          unit_amount: x.amount
-        },
-        quantity: 1
-      }));
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      line_items: toStripeItems(lineItems),
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: 'eur',
+            product_data: {
+              name:
+                payMode === 'deposit'
+                  ? 'Acompte réservation'
+                  : payMode === 'balance'
+                  ? 'Solde + taxe de séjour'
+                  : 'Paiement total (hébergement + taxe)',
+            },
+            unit_amount: EUR(toPay),
+          },
+        },
+      ],
       success_url: process.env.SUCCESS_URL,
       cancel_url: process.env.CANCEL_URL,
-      customer_email: customerEmail || undefined,
       metadata: {
-        lodgingType,
-        startDate, endDate,
-        adults: String(adults),
-        children: String(children),
-        babies: String(babies),
+        lodging,
         nights: String(nights),
-        lastMinute: isLastMinute ? 'yes' : 'no'
-      }
+        extra_guests: String(extraGuests),
+        city_tax_total: String(cityTaxTotal),
+        pay_mode: payMode,
+      },
     });
 
-    return { statusCode: 200, headers: CORS(), body: JSON.stringify({ url: session.url }) };
-  } catch (e) {
-    return { statusCode: 500, headers: CORS(), body: JSON.stringify({ error: e.message || 'Server error' }) };
+    return {
+      statusCode: 200,
+      headers: CORS(),
+      body: JSON.stringify({ url: session.url }),
+    };
+  } catch (err) {
+    return {
+      statusCode: 500,
+      headers: CORS(),
+      body: JSON.stringify({ error: err.message || 'Stripe error' }),
+    };
   }
-}
+};
+
