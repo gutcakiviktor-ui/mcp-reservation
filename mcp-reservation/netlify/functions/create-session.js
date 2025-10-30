@@ -1,4 +1,4 @@
-// netlify/functions/create-session.js
+netlify/functions/create-session.js
 import Stripe from 'stripe';
 
 const CORS = () => ({
