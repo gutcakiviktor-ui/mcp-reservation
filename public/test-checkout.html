@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Test Checkout</title></head>
+<body style="font-family:system-ui;padding:24px">
+  <h2>Test Stripe Checkout</h2>
+  <button id="btn" style="padding:10px 14px;font-size:16px">Pay 1 € (test)</button>
+  <script>
+    document.getElementById('btn').onclick = async () => {
+      const res = await fetch('/.netlify/functions/checkout', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ amountToPay: 1.00, description:'Test 1€' })
+      });
+      const data = await res.json();
+      if(data.url) location.href = data.url;
+      else alert('Erreur: ' + JSON.stringify(data));
+    };
+  </script>
+</body></html>
